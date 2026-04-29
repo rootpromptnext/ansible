@@ -52,14 +52,37 @@
       when: install_awscli and aws_check.rc != 0
 
     # -----------------------------
-    # kubectl
+    # kubectl (latest stable - dynamic)
     # -----------------------------
-    - name: Download kubectl binary
+
+    - name: Get latest kubectl version
+      uri:
+        url: https://dl.k8s.io/release/stable.txt
+        return_content: yes
+      register: kubectl_latest
+      when: install_kubectl
+
+    - name: Check current kubectl version
+      command: kubectl version --client --short
+      register: kubectl_current
+      ignore_errors: yes
+      changed_when: false
+      when: install_kubectl
+
+    - name: Set kubectl version fact
+      set_fact:
+        kubectl_version: "{{ kubectl_latest.content | trim }}"
+      when: install_kubectl
+
+    - name: Download kubectl if missing or outdated
       get_url:
-        url: https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl
+        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
         dest: /usr/local/bin/kubectl
         mode: '0755'
-      when: install_kubectl
+      when: install_kubectl and (
+              kubectl_current.rc != 0 or
+              kubectl_version not in kubectl_current.stdout
+            )
 
     # -----------------------------
     # eksctl
