@@ -1,7 +1,11 @@
 ---
-- name: Install DevOps tools on Ubuntu 22
-  hosts: all
-  become: yes
+- name: Install DevOps tools
+
+  hosts: localhost
+  gather_facts: true
+  become: True
+  become_user: root
+
   vars:
     install_awscli: true
     install_helm: true
