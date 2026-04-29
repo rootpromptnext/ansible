@@ -1,155 +1,167 @@
 ---
-- name: Install DevOps tools
+- name: Install DevOps CLI Tools
   hosts: localhost
-  gather_facts: true
-  become: true
-  become_user: root
+  become: yes
+  gather_facts: yes
 
   vars:
     install_awscli: true
     install_helm: true
     install_eksctl: true
     install_kubectl: true
-    install_docker: true
-    install_jenkins: true
-    install_microk8s: true
 
   tasks:
-    - name: Update apt cache
+
+    # -----------------------------
+    # Common dependencies
+    # -----------------------------
+    - name: Install required packages
       apt:
+        name:
+          - curl
+          - unzip
+          - tar
+        state: present
         update_cache: yes
 
-    # ---------------- AWS CLI ----------------
-    - name: Install unzip
-      apt:
-        name: unzip
-        state: present
+    # -----------------------------
+    # AWS CLI v2
+    # -----------------------------
+    - name: Check if AWS CLI exists
+      command: aws --version
+      register: aws_check
+      ignore_errors: yes
+      changed_when: false
       when: install_awscli
 
-    - name: Download AWS CLI
+    - name: Download AWS CLI v2
       get_url:
         url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
         dest: /tmp/awscliv2.zip
-      when: install_awscli
+      when: install_awscli and aws_check.rc != 0
 
     - name: Unzip AWS CLI
       unarchive:
         src: /tmp/awscliv2.zip
         dest: /tmp
         remote_src: yes
-      when: install_awscli
+      when: install_awscli and aws_check.rc != 0
 
-    # ---------------- AWS CLI ----------------
-    - name: Check if AWS CLI is already installed
-      command: aws --version
-      register: awscli_check
+    - name: Install AWS CLI
+      command: /tmp/aws/install
+      when: install_awscli and aws_check.rc != 0
+
+    # -----------------------------
+    # kubectl
+    # -----------------------------
+    - name: Download kubectl binary
+      get_url:
+        url: https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+      when: install_kubectl
+
+    # -----------------------------
+    # eksctl
+    # -----------------------------
+    - name: Check if eksctl exists
+      command: eksctl version
+      register: eksctl_check
       ignore_errors: yes
       changed_when: false
-      when: install_awscli
+      when: install_eksctl
 
-    - name: Install or update AWS CLI
-      command: ./aws/install --update
-      args:
-        chdir: /tmp
-      when: install_awscli and awscli_check.rc != 0
-
-    # ---------------- Helm ----------------
-    - name: Download Helm install script
-      get_url:
-        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-        dest: /tmp/get_helm.sh
-        mode: '0700'
-      when: install_helm
-
-    - name: Install Helm
-      command: ./get_helm.sh
-      args:
-        chdir: /tmp
-      when: install_helm
-
-    # ---------------- eksctl ----------------
     - name: Download eksctl
       get_url:
-        url: https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_{{ ansible_system }}_amd64.tar.gz
+        url: https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz
         dest: /tmp/eksctl.tar.gz
-      when: install_eksctl
+      when: install_eksctl and eksctl_check.rc != 0
 
     - name: Extract eksctl
       unarchive:
         src: /tmp/eksctl.tar.gz
         dest: /tmp
         remote_src: yes
-      when: install_eksctl
+      when: install_eksctl and eksctl_check.rc != 0
 
-    - name: Move eksctl to /usr/local/bin
-      command: mv /tmp/eksctl /usr/local/bin/
-      when: install_eksctl
-
-    # ---------------- kubectl ----------------
-    - name: Download kubectl
-      get_url:
-        url: https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl
-        dest: /usr/local/bin/kubectl
+    - name: Move eksctl binary
+      copy:
+        src: /tmp/eksctl
+        dest: /usr/local/bin/eksctl
         mode: '0755'
+        remote_src: yes
+      when: install_eksctl and eksctl_check.rc != 0
+
+    # -----------------------------
+    # Helm
+    # -----------------------------
+    - name: Check if helm exists
+      command: helm version --short
+      register: helm_check
+      ignore_errors: yes
+      changed_when: false
+      when: install_helm
+
+    - name: Download Helm
+      get_url:
+        url: https://get.helm.sh/helm-v3.15.0-linux-amd64.tar.gz
+        dest: /tmp/helm.tar.gz
+      when: install_helm and helm_check.rc != 0
+
+    - name: Extract Helm
+      unarchive:
+        src: /tmp/helm.tar.gz
+        dest: /tmp
+        remote_src: yes
+      when: install_helm and helm_check.rc != 0
+
+    - name: Move Helm binary
+      copy:
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        mode: '0755'
+        remote_src: yes
+      when: install_helm and helm_check.rc != 0
+
+    # -----------------------------
+    # Verification (only if enabled)
+    # -----------------------------
+    - name: Verify AWS CLI
+      command: aws --version
+      register: aws_version
+      changed_when: false
+      when: install_awscli
+
+    - debug:
+        var: aws_version.stdout
+      when: install_awscli
+
+    - name: Verify kubectl
+      command: kubectl version --client
+      register: kubectl_version
+      changed_when: false
       when: install_kubectl
 
-    # ---------------- Docker ----------------
-    - name: Install Docker prerequisites
-      apt:
-        name: [ca-certificates, curl]
-        state: present
-      when: install_docker
+    - debug:
+        var: kubectl_version.stdout
+      when: install_kubectl
 
-    - name: Ensure apt cache is updated
-      apt:
-        update_cache: yes
-      when: install_docker
+    - name: Verify eksctl
+      command: eksctl version
+      register: eksctl_version
+      changed_when: false
+      when: install_eksctl
 
-    - name: Install Docker (Ubuntu package)
-      apt:
-        name: docker.io
-        state: present
-      when: install_docker
+    - debug:
+        var: eksctl_version.stdout
+      when: install_eksctl
 
-    - name: Add users to docker group
-      user:
-        name: "{{ item }}"
-        groups: docker
-        append: yes
-      loop:
-        - ubuntu
-        - jenkins
-      when: install_docker and install_jenkins
+    - name: Verify helm
+      command: helm version --short
+      register: helm_version
+      changed_when: false
+      when: install_helm
 
-     # ---------------- MicroK8s ----------------
-    - name: Install MicroK8s
-      snap:
-        name: microk8s
-        classic: yes
-        state: present
-      when: install_microk8s
-
-    - name: Add current user to microk8s group
-      user:
-        name: "{{ ansible_env.USER }}"
-        groups: microk8s
-        append: yes
-      when: install_microk8s
-
-    - name: Fix kube ownership
-      file:
-        path: "{{ ansible_env.HOME }}/.kube"
-        owner: "{{ ansible_env.USER }}"
-        recurse: yes
-      when: install_microk8s
-
-    - name: Wait for MicroK8s to be ready
-      command: microk8s status --wait-ready
-      when: install_microk8s
-
-    - name: Add kubectl alias
-      lineinfile:
-        path: "{{ ansible_env.HOME }}/.bashrc"
-        line: "alias kubectl='microk8s kubectl'"
-        create: yes
-      when: install_microk8s
+    - debug:
+        var: helm_version.stdout
+      when: install_helm
