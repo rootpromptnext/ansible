@@ -52,7 +52,7 @@
       when: install_awscli and aws_check.rc != 0
 
     # -----------------------------
-    # kubectl (latest stable - dynamic)
+    # kubectl
     # -----------------------------
 
     - name: Get latest kubectl version
