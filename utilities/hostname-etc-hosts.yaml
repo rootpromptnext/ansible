@@ -1,0 +1,32 @@
+---
+- name: Configure hostname and hosts file dynamically
+  hosts: localhost
+  become: yes
+  gather_facts: yes
+
+  vars:
+    hostname: devops-vm.example.com
+
+  tasks:
+
+    - name: Set hostname
+      hostname:
+        name: "{{ hostname }}"
+
+    - name: Get primary IP address
+      set_fact:
+        ip_address: "{{ ansible_default_ipv4.address }}"
+
+    - name: Add entry in /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: "^{{ ip_address }}"
+        line: "{{ ip_address }} {{ hostname }}"
+        state: present
+
+    - name: Ensure localhost entry exists
+      lineinfile:
+        path: /etc/hosts
+        regexp: "^127.0.0.1"
+        line: "127.0.0.1 localhost"
+        state: present
