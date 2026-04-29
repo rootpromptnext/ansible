@@ -1,0 +1,88 @@
+---
+- name: Install MicroK8s
+  hosts: localhost
+  become: yes
+  gather_facts: yes
+
+  vars:
+    microk8s_users:
+      - prayag
+
+  tasks:
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install snapd (required for MicroK8s)
+      apt:
+        name: snapd
+        state: present
+
+    - name: Ensure snapd is running
+      systemd:
+        name: snapd
+        state: started
+        enabled: yes
+
+    - name: Install MicroK8s via snap
+      snap:
+        name: microk8s
+        classic: yes
+        state: present
+
+    - name: Add users to microk8s group
+      user:
+        name: "{{ item }}"
+        groups: microk8s
+        append: yes
+      loop: "{{ microk8s_users }}"
+
+    - name: Create .kube directory
+      file:
+        path: "/home/{{ item }}/.kube"
+        state: directory
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: '0755'
+      loop: "{{ microk8s_users }}"
+
+    - name: Wait for MicroK8s to be ready
+      command: microk8s status --wait-ready
+      register: mk8s_status
+      changed_when: false
+
+    - name: Enable essential addons (DNS, storage, dashboard)
+      command: microk8s enable dns storage dashboard
+      register: addons_output
+      changed_when: "'Nothing to do' not in addons_output.stdout"
+
+    - name: Get kubeconfig
+      command: microk8s config
+      register: kubeconfig_output
+      changed_when: false
+
+    - name: Copy kubeconfig for users
+      copy:
+        content: "{{ kubeconfig_output.stdout }}"
+        dest: "/home/{{ item }}/.kube/config"
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: '0600'
+      loop: "{{ microk8s_users }}"
+
+    - name: Add kubectl alias instead of overriding kubectl
+      lineinfile:
+        path: "/home/{{ item }}/.bashrc"
+        line: "alias kubectl='microk8s kubectl'"
+        state: present
+      loop: "{{ microk8s_users }}"
+
+    - name: Verify nodes
+      command: microk8s kubectl get nodes
+      register: nodes_output
+      changed_when: false
+
+    - name: Show nodes
+      debug:
+        var: nodes_output.stdout
