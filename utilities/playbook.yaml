@@ -1,9 +1,8 @@
 ---
 - name: Install DevOps tools
-
   hosts: localhost
   gather_facts: true
-  become: True
+  become: true
   become_user: root
 
   vars:
@@ -13,6 +12,7 @@
     install_kubectl: true
     install_docker: true
     install_jenkins: true
+    install_microk8s: true
 
   tasks:
     - name: Update apt cache
@@ -39,11 +39,19 @@
         remote_src: yes
       when: install_awscli
 
-    - name: Install AWS CLI
-      command: ./aws/install
+    # ---------------- AWS CLI ----------------
+    - name: Check if AWS CLI is already installed
+      command: aws --version
+      register: awscli_check
+      ignore_errors: yes
+      changed_when: false
+      when: install_awscli
+
+    - name: Install or update AWS CLI
+      command: ./aws/install --update
       args:
         chdir: /tmp
-      when: install_awscli
+      when: install_awscli and awscli_check.rc != 0
 
     # ---------------- Helm ----------------
     - name: Download Helm install script
@@ -92,56 +100,16 @@
         state: present
       when: install_docker
 
-    - name: Add Docker GPG key
-      get_url:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        dest: /etc/apt/keyrings/docker.asc
-        mode: '0644'
+    - name: Ensure apt cache is updated
+      apt:
+        update_cache: yes
       when: install_docker
 
-    - name: Add Docker repository
-      apt_repository:
-        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+    - name: Install Docker (Ubuntu package)
+      apt:
+        name: docker.io
         state: present
       when: install_docker
-
-    - name: Install Docker packages
-      apt:
-        name: [docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin]
-        state: present
-      when: install_docker
-
-    # ---------------- Jenkins ----------------
-    - name: Install OpenJDK
-      apt:
-        name: openjdk-21-jdk
-        state: present
-      when: install_jenkins
-
-    - name: Add Jenkins key
-      get_url:
-        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
-        dest: /usr/share/keyrings/jenkins-keyring.asc
-      when: install_jenkins
-
-    - name: Add Jenkins repository
-      apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
-        state: present
-      when: install_jenkins
-
-    - name: Install Jenkins
-      apt:
-        name: jenkins
-        state: present
-      when: install_jenkins
-
-    - name: Enable and start Jenkins
-      systemd:
-        name: jenkins
-        state: started
-        enabled: yes
-      when: install_jenkins
 
     - name: Add users to docker group
       user:
@@ -152,3 +120,36 @@
         - ubuntu
         - jenkins
       when: install_docker and install_jenkins
+
+     # ---------------- MicroK8s ----------------
+    - name: Install MicroK8s
+      snap:
+        name: microk8s
+        classic: yes
+        state: present
+      when: install_microk8s
+
+    - name: Add current user to microk8s group
+      user:
+        name: "{{ ansible_env.USER }}"
+        groups: microk8s
+        append: yes
+      when: install_microk8s
+
+    - name: Fix kube ownership
+      file:
+        path: "{{ ansible_env.HOME }}/.kube"
+        owner: "{{ ansible_env.USER }}"
+        recurse: yes
+      when: install_microk8s
+
+    - name: Wait for MicroK8s to be ready
+      command: microk8s status --wait-ready
+      when: install_microk8s
+
+    - name: Add kubectl alias
+      lineinfile:
+        path: "{{ ansible_env.HOME }}/.bashrc"
+        line: "alias kubectl='microk8s kubectl'"
+        create: yes
+      when: install_microk8s
